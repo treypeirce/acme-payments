@@ -1,21 +1,25 @@
 #!/usr/bin/env node
 /**
- * Starter guardrail for coding agents operating in this repo.
- * Reads a hook payload as JSON on stdin and denies dangerous shell commands.
+ * Change-control guardrail for coding agents operating in this repo.
+ * Registered as a `beforeShellExecution` hook in .cursor/hooks.json, so it runs
+ * before ANY shell command an agent tries — and can DENY it. This is
+ * enforcement, not advice: unlike a rule the model can rationalize past, a
+ * denied hook stops the command outright.
  *
- * This is intentionally minimal — the Sentinel demo (Phase 4) hardens and
- * extends these rules. Verify the exact Cursor hooks schema against
- * https://cursor.com/docs/hooks before relying on it in production.
+ * Reads the hook payload as JSON on stdin, returns {permission, agentMessage}.
  */
 import { readFileSync } from "node:fs";
 
 const DANGEROUS = [
-  { re: /curl[^\n|]*\|\s*(sh|bash)/i, why: "piping a remote script straight into a shell" },
-  { re: /wget[^\n|]*\|\s*(sh|bash)/i, why: "piping a remote script straight into a shell" },
-  { re: /rm\s+-rf\s+(\/|~|\$HOME)/i, why: "recursive delete outside the workspace" },
-  { re: /git\s+push[^\n]*--force/i, why: "force-push" },
-  { re: /npm\s+publish/i, why: "publishing a package" },
-  { re: /\.github\/workflows/i, why: "modifying CI workflow files" },
+  { re: /(curl|wget)\b[^\n|]*\|\s*(sh|bash|zsh)/i, why: "piping a remote script straight into a shell" },
+  { re: /\brm\s+-rf?\s+(\/|~|\$HOME|\.\.)/i, why: "recursive delete outside the workspace" },
+  { re: /\bgit\s+push\b[^\n]*(--force|-f)\b/i, why: "force-push (rewrites shared history)" },
+  { re: /\b(npm|yarn|pnpm)\s+publish\b/i, why: "publishing a package" },
+  { re: /\.github\/workflows\//i, why: "modifying CI/CD workflow files" },
+  { re: /\bchmod\s+777\b/i, why: "granting world-writable permissions" },
+  { re: /\bsudo\b/i, why: "privilege escalation" },
+  { re: /\bbase64\s+-d[^\n|]*\|\s*(sh|bash)/i, why: "decoding and executing an opaque payload" },
+  { re: /\b(cat|printenv|env)\b[^\n]*\.env\b/i, why: "reading secrets from .env" },
 ];
 
 function readStdin() {
@@ -25,22 +29,14 @@ function readStdin() {
     return "";
   }
 }
-
-function extractCommand(payload) {
-  if (!payload || typeof payload !== "object") return "";
-  return (
-    payload.command ??
-    payload.args?.command ??
-    payload.tool_input?.command ??
-    payload.input?.command ??
-    ""
-  );
+function extractCommand(p) {
+  if (!p || typeof p !== "object") return "";
+  return p.command ?? p.args?.command ?? p.tool_input?.command ?? p.input?.command ?? "";
 }
 
-const raw = readStdin();
 let payload = {};
 try {
-  payload = JSON.parse(raw || "{}");
+  payload = JSON.parse(readStdin() || "{}");
 } catch {
   payload = {};
 }
