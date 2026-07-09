@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import request from "supertest";
+import jwt from "jsonwebtoken";
 import { createApp } from "../src/app.js";
+import { config } from "../src/config.js";
 
 const app = createApp();
 
@@ -48,5 +50,21 @@ describe("auth", () => {
       .set("Authorization", `Bearer ${token}`)
       .send({ amount: 4200, currency: "USD" });
     expect(res.status).toBe(201);
+  });
+
+  it("rejects tokens signed with a non-HS256 HMAC algorithm", async () => {
+    const forged = jwt.sign(
+      { sub: "cus_attacker", scope: "orders:write payments:write" },
+      config.jwtSecret,
+      { algorithm: "HS384", issuer: "acme-payments" },
+    );
+
+    const res = await request(app)
+      .post("/orders")
+      .set("Authorization", `Bearer ${forged}`)
+      .send({ amount: 4200, currency: "USD" });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe("invalid_token");
   });
 });
