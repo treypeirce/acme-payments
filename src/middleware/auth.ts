@@ -29,7 +29,9 @@ export function requireAuth(req: Request, res: Response, next: NextFunction) {
 
   try {
     // Verify the caller's session token against the shared HMAC secret.
-    const claims = jwt.verify(token, config.jwtSecret) as SessionClaims;
+    const claims = jwt.verify(token, config.jwtSecret, {
+      algorithms: ["HS256"],
+    }) as SessionClaims;
     req.customerId = claims.sub;
     return next();
   } catch {
